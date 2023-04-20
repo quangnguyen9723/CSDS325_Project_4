@@ -4,9 +4,13 @@ import java.net.Socket;
 import java.net.URL;
 
 public class ProxyServerThread extends Thread {
+    /**
+     * things to do
+     * 1. receive GET request from wget
+     * 2. handle GET request until getting to the resource or 4xx response
+     * 3. forward the response back to wget
+     */
     private final Socket clientSocket;
-    private boolean isRedirected = false;
-    private static int count = 1;
 
     public ProxyServerThread(Socket socket) {
         this.clientSocket = socket;
@@ -15,52 +19,60 @@ public class ProxyServerThread extends Thread {
     @Override
     public void run() {
         try {
-            System.out.println("connected, count=" + count++);
-
-            BufferedReader clientReader = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
+            // Read client request
+            InputStream clientIn = clientSocket.getInputStream();
+            BufferedReader clientReader = new BufferedReader(new InputStreamReader(clientIn));
             String requestLine = clientReader.readLine();
+            System.out.println(requestLine); //---------------------
 
-            String[] requestTokens = requestLine.split(" ");
-            String method = requestTokens[0];
-            String url = requestTokens[1];
+            // Parse the request and get the URL
+            String[] requestParts = requestLine.split(" ");
+            String method = requestParts[0];
+            String url = requestParts[1];
 
-            URL urlObj = new URL(url);
-            HttpURLConnection connection = (HttpURLConnection) urlObj.openConnection();
+            // Send the request to the destination server using HttpURLConnection
+            HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
             connection.setRequestMethod(method);
 
-            BufferedReader serverReader = new BufferedReader(new InputStreamReader(connection.getInputStream()));
-
-            OutputStream clientOutput = clientSocket.getOutputStream();
-            PrintWriter clientWriter = new PrintWriter(clientOutput, true);
-
-            String responseLine = "HTTP/1.1 " + connection.getResponseCode() + " " + connection.getResponseMessage();
-            clientWriter.println(responseLine);
-
-            System.out.println(responseLine);
-
-            String headerLine;
-            boolean isConnected = true;
-
-//            while (isConnected) {
-//                headerLine = serverReader.readLine();
-//                if (headerLine != null) System.out.println(headerLine);
-//            }
-
-            while ((headerLine = serverReader.readLine()) != null) {
-                clientWriter.println(headerLine);
-                System.out.println(headerLine);
+            // Read headers from client and set them to the HttpURLConnection
+            String line;
+            while (!(line = clientReader.readLine()).isEmpty()) {
+                System.out.println(line); //---------------------
+                int index = line.indexOf(":");
+                if (index != -1) {
+                    connection.setRequestProperty(line.substring(0, index), line.substring(index + 1).trim());
+                }
             }
 
+            // Get the server's response
+            InputStream serverIn = connection.getInputStream();
+
+            // Write the status line and headers back to the client
+            OutputStream clientOut = clientSocket.getOutputStream();
+            PrintWriter clientWriter = new PrintWriter(new OutputStreamWriter(clientOut));
+            clientWriter.println("HTTP/1.1 " + connection.getResponseCode() + " " + connection.getResponseMessage());
+            System.out.println();
+            System.out.println("HTTP/1.1 " + connection.getResponseCode() + " " + connection.getResponseMessage()); //---------------------
+            for (String key : connection.getHeaderFields().keySet()) {
+                if (key != null) {
+                    System.out.println(key + ": " + connection.getHeaderField(key)); //---------------------
+                    clientWriter.println(key + ": " + connection.getHeaderField(key));
+                }
+            }
             clientWriter.println();
-            String content;
-            while ((content = serverReader.readLine()) != null) {
-                clientWriter.println(content);
-            }
-            System.out.println("finished");
+            clientWriter.flush();
 
-            clientWriter.close();
-            clientOutput.close();
-            clientReader.close();
+            // Send the server's response back to the client
+            byte[] buffer = new byte[4096];
+            int bytesRead;
+            while ((bytesRead = serverIn.read(buffer)) != -1) {
+                System.out.println(new String(buffer)); //---------------------
+                clientOut.write(buffer, 0, bytesRead);
+            }
+            clientOut.flush();
+
+            // Close all connections
+            connection.disconnect();
             clientSocket.close();
         } catch (IOException e) {
             e.printStackTrace();
