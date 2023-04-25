@@ -23,9 +23,9 @@ public class ProxyServerThread extends Thread {
     @Override
     public void run() {
         try {
-            // Read client request
+            // Client request stream
             BufferedReader fromClient = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
-            // Receive output
+            // Handle Request and get Response
             byte[] response = handleRequest(fromClient);
 
             // Send the cached response back to the client
@@ -51,7 +51,6 @@ public class ProxyServerThread extends Thread {
 
         // Check if the response is already cached
         byte[] response = cache.get(url);
-
         if (response != null) {
             return response;
         }
@@ -64,13 +63,14 @@ public class ProxyServerThread extends Thread {
         String line;
         while (!(line = fromClient.readLine()).isEmpty()) {
             int index = line.indexOf(":");
-            if (index == -1) continue;
+            if (index == -1) continue; // malformed or CRLF
 
             String key = line.substring(0, index);
             String value = line.substring(index + 1).trim();
             connection.setRequestProperty(key, value);
         }
 
+        // get Response
         response = getResponse(url, connection);
 
         // Close HttpURLConnection
@@ -88,23 +88,20 @@ public class ProxyServerThread extends Thread {
         // Write the status line and headers to responseStream
         String statusLine = "HTTP/1.1 " + connection.getResponseCode() + " " + connection.getResponseMessage() + CRLF;
         responseStream.write(statusLine.getBytes());
-
         for (String key : connection.getHeaderFields().keySet()) {
             if (key == null) continue;
 
             String headerLine = key + ": " + connection.getHeaderField(key) + CRLF;
             responseStream.write(headerLine.getBytes());
         }
-
+        // Add blank line to indicate separation between header and body
         responseStream.write(CRLF.getBytes());
-
         // Read the response body into responseStream
         byte[] buffer = new byte[4096];
         int bytesRead;
         while ((bytesRead = serverIn.read(buffer)) != -1) {
             responseStream.write(buffer, 0, bytesRead);
         }
-
         // Cache the response
         response = responseStream.toByteArray();
         cache.put(url, response);
